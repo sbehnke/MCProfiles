@@ -1,0 +1,47 @@
+<svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
+  <!-- Top base (grass) -->
+  <polygon points="64,8 120,36 64,64 8,36"
+           fill="#6CC24A"/>
+
+  <!-- Grass pixel patches -->
+  <polygon points="64,8 80,16 64,24 48,16"
+           fill="#7ED957"/>
+  <polygon points="80,16 96,24 80,32 64,24"
+           fill="#5AAE3F"/>
+  <polygon points="48,16 64,24 48,32 32,24"
+           fill="#5AAE3F"/>
+  <polygon points="64,24 80,32 64,40 48,32"
+           fill="#4E9F3D"/>
+
+  <!-- Grass edge -->
+  <polygon points="8,36 64,64 120,36 120,44 64,72 8,44"
+           fill="#4E9F3D"/>
+
+  <!-- Left side (dirt) -->
+  <polygon points="8,36 64,64 64,120 8,92"
+           fill="#7A4B2A"/>
+
+  <!-- Right side (dirt lighter) -->
+  <polygon points="120,36 64,64 64,120 120,92"
+           fill="#8C5A34"/>
+
+  <!-- Dirt speckles (left) -->
+  <rect x="20" y="60" width="6" height="6" fill="#5E381F"/>
+  <rect x="40" y="80" width="5" height="5" fill="#5E381F"/>
+  <rect x="28" y="95" width="4" height="4" fill="#9B6A3F"/>
+
+  <!-- Dirt speckles (right) -->
+  <rect x="80" y="70" width="5" height="5" fill="#6A4024"/>
+  <rect x="95" y="85" width="6" height="6" fill="#6A4024"/>
+  <rect x="70" y="100" width="4" height="4" fill="#A8794D"/>
+
+  <!-- Subtle shading -->
+  <polygon points="8,36 64,64 64,120 8,92"
+           fill="black" opacity="0.05"/>
+  <polygon points="120,36 64,64 64,120 120,92"
+           fill="white" opacity="0.04"/>
+
+  <!-- Outline -->
+  <polygon points="64,8 120,36 120,92 64,120 8,92 8,36"
+           fill="none" stroke="#000000" stroke-opacity="0.15" stroke-width="2"/>
+</svg>
