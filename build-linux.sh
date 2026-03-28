@@ -2,7 +2,7 @@
 set -euo pipefail
 
 APP_NAME="mcprofiles"
-VERSION="1.0.0"
+VERSION="1.0.1"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BUILD_DIR="${SCRIPT_DIR}/build"

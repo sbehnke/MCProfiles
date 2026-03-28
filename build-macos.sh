@@ -12,7 +12,7 @@ fi
 APP_NAME="MC Profile Editor"
 BUNDLE_ID="dev.moat.mcprofiles"
 EXECUTABLE="mcprofiles"
-VERSION="1.0.0"
+VERSION="1.0.1"
 
 # --- Codesigning & Notarization ---
 # Set these via environment variables or edit here.
