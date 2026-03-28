@@ -113,6 +113,18 @@ sudo apt install gcc-mingw-w64  # Debian/Ubuntu
 
 Produces `build/mcprofiles-windows/mcprofiles.exe`.
 
+#### Windows ARM64 note
+
+The native ARM64 build uses OpenGL ES (via Fyne's `arm64` build tags) and requires ANGLE DLLs (`libEGL.dll` and `libGLESv2.dll`) in the same directory as the exe. Without them, the window opens but nothing renders.
+
+**Workaround options:**
+1. **Use the amd64 build** — Windows ARM64 runs x86_64 apps via emulation with no setup needed
+2. **Copy ANGLE DLLs** from an installed Chromium-based browser (Edge, Chrome) into the same folder as `mcprofiles.exe`:
+   ```powershell
+   copy "C:\Program Files (x86)\Microsoft\Edge\Application\<version>\libEGL.dll" .
+   copy "C:\Program Files (x86)\Microsoft\Edge\Application\<version>\libGLESv2.dll" .
+   ```
+
 ### Docker multi-arch build (all platforms)
 
 Builds Linux and Windows binaries for both amd64 and arm64 using Docker:
