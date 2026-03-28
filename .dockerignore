@@ -1,0 +1,6 @@
+build
+.git
+.env
+.DS_Store
+mcprofiles
+*.exe

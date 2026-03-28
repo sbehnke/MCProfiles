@@ -113,6 +113,25 @@ sudo apt install gcc-mingw-w64  # Debian/Ubuntu
 
 Produces `build/mcprofiles-windows/mcprofiles.exe`.
 
+### Docker multi-arch build (all platforms)
+
+Builds Linux and Windows binaries for both amd64 and arm64 using Docker:
+
+```bash
+./build-docker.sh
+```
+
+Produces 4 archives in `build/release/`:
+
+| Artifact | Platform |
+|----------|----------|
+| `mcprofiles-linux-amd64.tar.gz` | Linux x86_64 |
+| `mcprofiles-linux-arm64.tar.gz` | Linux aarch64 |
+| `mcprofiles-windows-amd64.zip` | Windows x86_64 |
+| `mcprofiles-windows-arm64.zip` | Windows ARM64 |
+
+Requires Docker with buildx. On Apple Silicon, arm64 containers run natively and amd64 via Rosetta.
+
 ### Quick build (any platform, no packaging)
 
 ```bash
@@ -124,16 +143,18 @@ go build -o mcprofiles .
 
 ```
 MCProfiles/
-  main.go          Entry point, window layout, toolbar, state management
-  profiles.go      JSON types, custom marshal/unmarshal, load/save, path detection
-  icons.go         Base64 icon decoding, placeholder generation
-  ui_list.go       Sidebar profile list with icons
-  ui_detail.go     Detail editing panel, icon picker, mods folder
+  main.go            Entry point, window layout, toolbar, state management
+  profiles.go        JSON types, custom marshal/unmarshal, load/save, path detection
+  icons.go           Base64 icon decoding, placeholder generation
+  ui_list.go         Sidebar profile list with icons
+  ui_detail.go       Detail editing panel, icon picker, mods folder
   resources/
-    AppIcon.icon/  macOS Icon Composer bundle (Tahoe-style layered icon)
-  build-macos.sh   macOS .app bundle build script
-  build-linux.sh   Linux build script with .desktop integration
-  build-windows.sh Windows build script (native or cross-compile)
+    AppIcon.icon/    macOS Icon Composer bundle (Tahoe-style layered icon)
+  build-macos.sh     macOS .app bundle with codesign & notarization
+  build-linux.sh     Linux build with .desktop integration
+  build-windows.sh   Windows build (native or cross-compile)
+  build-docker.sh    Docker multi-arch build (Linux + Windows, amd64 + arm64)
+  Dockerfile         Build container with Fyne deps + MinGW + llvm-mingw
 ```
 
 ## License
