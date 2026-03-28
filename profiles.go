@@ -101,7 +101,7 @@ func CandidateProfilePaths() []string {
 		// Flatpak
 		dirs = append(dirs, filepath.Join(home, ".var", "app", "com.mojang.Minecraft", ".minecraft"))
 		// Snap
-		dirs = append(dirs, filepath.Join(home, "snap", "mc-installer", "common", ".minecraft"))
+		dirs = append(dirs, filepath.Join(home, "snap", "mc-installer", "current", ".minecraft"))
 	}
 
 	filenames := []string{"launcher_profiles.json", "launcher_profiles_microsoft_store.json"}

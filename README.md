@@ -26,7 +26,7 @@ The app automatically searches these locations:
 | **Windows** (MS Store) | `%LOCALAPPDATA%\Packages\Microsoft.4297127D64EC6_8wekyb3d8bbwe\LocalCache\Local\minecraft\` |
 | **Linux** | `~/.minecraft/` |
 | **Linux** (Flatpak) | `~/.var/app/com.mojang.Minecraft/.minecraft/` |
-| **Linux** (Snap) | `~/snap/mc-installer/common/.minecraft/` |
+| **Linux** (Snap) | `~/snap/mc-installer/current/.minecraft/` |
 
 Both `launcher_profiles.json` and `launcher_profiles_microsoft_store.json` are checked at each location. You can also open any file manually via the toolbar.
 
