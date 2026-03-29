@@ -4,6 +4,8 @@ A cross-platform GUI application for editing Minecraft's `launcher_profiles.json
 
 Built with [Go](https://go.dev) and [Fyne](https://fyne.io).
 
+![MC Profile Editor](resources/screenshot.png)
+
 ## Features
 
 - **Load & save** `launcher_profiles.json` with lossless round-trip (preserves all fields)
