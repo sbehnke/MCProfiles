@@ -1,10 +1,9 @@
 #!/bin/bash
 set -euo pipefail
 
-APP_NAME="mcprofiles"
-VERSION="1.1"
-
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+APP_NAME="mcprofiles"
+VERSION="${VERSION:-$(cat "${SCRIPT_DIR}/VERSION")}"
 BUILD_DIR="${SCRIPT_DIR}/build"
 APP_DIR="${BUILD_DIR}/${APP_NAME}-windows"
 

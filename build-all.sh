@@ -5,7 +5,8 @@ set -euo pipefail
 # Produces Linux and Windows binaries for the current container architecture,
 # plus Windows cross-compiled binaries.
 
-VERSION="${VERSION:-1.1}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+VERSION="${VERSION:-$(cat "${SCRIPT_DIR}/VERSION")}"
 OUT="/out"
 mkdir -p "${OUT}"
 

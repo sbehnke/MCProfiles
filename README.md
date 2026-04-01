@@ -150,6 +150,8 @@ Requires Docker with buildx. On Apple Silicon, arm64 containers run natively and
 
 Linux and Windows release archives can also be built in GitHub Actions by pushing a `v*` tag. The workflow uploads the Docker-built artifacts to the matching GitHub release. macOS remains a local build because signing and notarization use local Apple credentials.
 
+Release/package version metadata is sourced from the top-level `VERSION` file. Build scripts also allow overriding it via the `VERSION` environment variable when needed.
+
 ### Quick build (any platform, no packaging)
 
 ```bash
