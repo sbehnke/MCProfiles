@@ -44,7 +44,7 @@ mkdir -p "${MACOS_DIR}" "${RESOURCES_DIR}"
 
 # --- Build the Go binary ---
 echo "==> Building Go binary..."
-CGO_ENABLED=1 go build -o "${MACOS_DIR}/${EXECUTABLE}" "${SCRIPT_DIR}"
+CGO_ENABLED=1 CGO_LDFLAGS="-Wl,-no_warn_duplicate_libraries" go build -o "${MACOS_DIR}/${EXECUTABLE}" "${SCRIPT_DIR}"
 
 # --- Copy the .icon bundle (primary icon for Tahoe) ---
 echo "==> Copying Icon Composer bundle for Tahoe..."

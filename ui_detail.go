@@ -8,10 +8,12 @@ import (
 	"strconv"
 
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/storage"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 )
 
@@ -22,21 +24,28 @@ type DetailPanel struct {
 	state  *AppState
 	window fyne.Window
 
-	iconImage  *fyne.Container
-	nameEntry  *widget.Entry
-	versionEntry *widget.Entry
-	typeSelect *widget.Select
-	gameDirEntry *widget.Entry
-	javaDirEntry *widget.Entry
-	javaArgsEntry *widget.Entry
-	resWEntry     *widget.Entry
-	resHEntry     *widget.Entry
-	modsFolderLbl *widget.Label
-	modsFolderRow *fyne.Container
+	iconImage        *fyne.Container
+	nameEntry        *widget.Entry
+	versionEntry     *widget.Entry
+	typeSelect       *widget.Select
+	gameDirEntry     *widget.Entry
+	javaDirEntry     *widget.Entry
+	javaArgsEntry    *widget.Entry
+	resWEntry        *widget.Entry
+	resHEntry        *widget.Entry
+	modsFolderLbl    *widget.Label
+	modsFolderRow    *fyne.Container
+	modsStatusLbl    *canvas.Text
+	checkModsBtn     *widget.Button
+	searchModsBtn    *widget.Button
+	shadersFolderLbl *widget.Label
+	shadersFolderRow *fyne.Container
+	checkShadersBtn  *widget.Button
+	searchShadersBtn *widget.Button
 
-	form      *widget.Form
-	emptyMsg  *fyne.Container
-	stack     *fyne.Container
+	form     *widget.Form
+	emptyMsg *fyne.Container
+	stack    *fyne.Container
 
 	updating bool // prevents OnChanged loops
 }
@@ -108,7 +117,75 @@ func NewDetailPanel(state *AppState, win fyne.Window) *DetailPanel {
 		}
 		openInFileManager(path)
 	})
-	dp.modsFolderRow = container.NewBorder(nil, nil, nil, openModsBtn, dp.modsFolderLbl)
+	dp.checkModsBtn = widget.NewButton("Check Mods", func() {
+		path := dp.modsFolderLbl.Text
+		if path == "" {
+			return
+		}
+		prof := dp.state.Data.Profiles[dp.state.SelectedKey]
+		if prof == nil {
+			return
+		}
+		gameVersion := ResolveGameVersion(prof, dp.state.FilePath)
+		showModsCheckDialog(path, gameVersion, dp.window)
+	})
+	dp.searchModsBtn = widget.NewButton("Search Mods", func() {
+		path := dp.modsFolderLbl.Text
+		if path == "" {
+			return
+		}
+		prof := dp.state.Data.Profiles[dp.state.SelectedKey]
+		if prof == nil {
+			return
+		}
+		gameVersion := ResolveGameVersion(prof, dp.state.FilePath)
+		loader := ResolveLoader(prof, dp.state.FilePath)
+		showModSearchDialog(path, gameVersion, loader, dp.window)
+	})
+	modsButtons := container.NewHBox(openModsBtn, dp.checkModsBtn, dp.searchModsBtn)
+	dp.modsStatusLbl = canvas.NewText("", theme.DisabledColor())
+	dp.modsStatusLbl.TextSize = theme.TextSize() - 2
+	dp.modsStatusLbl.Hide()
+	dp.modsFolderRow = container.NewVBox(
+		container.NewBorder(nil, nil, nil, modsButtons, dp.modsFolderLbl),
+		dp.modsStatusLbl,
+	)
+
+	dp.shadersFolderLbl = widget.NewLabel("")
+	dp.shadersFolderLbl.Truncation = fyne.TextTruncateEllipsis
+	openShadersBtn := widget.NewButton("Open", func() {
+		path := dp.shadersFolderLbl.Text
+		if path == "" {
+			return
+		}
+		openInFileManager(path)
+	})
+	dp.checkShadersBtn = widget.NewButton("Check Shaders", func() {
+		path := dp.shadersFolderLbl.Text
+		if path == "" {
+			return
+		}
+		prof := dp.state.Data.Profiles[dp.state.SelectedKey]
+		if prof == nil {
+			return
+		}
+		gameVersion := ResolveGameVersion(prof, dp.state.FilePath)
+		showShadersCheckDialog(path, gameVersion, dp.window)
+	})
+	dp.searchShadersBtn = widget.NewButton("Search Shaders", func() {
+		path := dp.shadersFolderLbl.Text
+		if path == "" {
+			return
+		}
+		prof := dp.state.Data.Profiles[dp.state.SelectedKey]
+		if prof == nil {
+			return
+		}
+		gameVersion := ResolveGameVersion(prof, dp.state.FilePath)
+		showShaderSearchDialog(path, gameVersion, dp.window)
+	})
+	shadersButtons := container.NewHBox(openShadersBtn, dp.checkShadersBtn, dp.searchShadersBtn)
+	dp.shadersFolderRow = container.NewBorder(nil, nil, nil, shadersButtons, dp.shadersFolderLbl)
 
 	dp.form = widget.NewForm(
 		widget.NewFormItem("Icon", iconRow),
@@ -117,6 +194,7 @@ func NewDetailPanel(state *AppState, win fyne.Window) *DetailPanel {
 		widget.NewFormItem("Type", dp.typeSelect),
 		widget.NewFormItem("Game Directory", container.NewBorder(nil, nil, nil, gameDirBrowse, dp.gameDirEntry)),
 		widget.NewFormItem("Mods Folder", dp.modsFolderRow),
+		widget.NewFormItem("Shaders Folder", dp.shadersFolderRow),
 		widget.NewFormItem("Java Path", dp.javaDirEntry),
 		widget.NewFormItem("Java Args", dp.javaArgsEntry),
 		widget.NewFormItem("Resolution", resRow),
@@ -161,13 +239,37 @@ func (dp *DetailPanel) Refresh(key string) {
 	dp.javaDirEntry.SetText(prof.JavaDir)
 	dp.javaArgsEntry.SetText(prof.JavaArgs)
 
-	// Resolve and display mods folder
+	// Resolve and display mods and shaders folders
+	loader := ""
 	if dp.state.FilePath != "" {
 		modsPath := ResolveModsFolder(prof, dp.state.FilePath)
 		dp.modsFolderLbl.SetText(modsPath)
+		shadersPath := ResolveShadersFolder(prof, dp.state.FilePath)
+		dp.shadersFolderLbl.SetText(shadersPath)
+		loader = ResolveLoader(prof, dp.state.FilePath)
 	} else {
 		dp.modsFolderLbl.SetText("")
+		dp.shadersFolderLbl.SetText("")
 	}
+
+	if loader != "" {
+		dp.checkModsBtn.Show()
+		dp.searchModsBtn.Show()
+		dp.modsStatusLbl.Text = ""
+		dp.modsStatusLbl.Refresh()
+		dp.modsStatusLbl.Hide()
+	} else {
+		dp.checkModsBtn.Hide()
+		dp.searchModsBtn.Hide()
+		dp.modsStatusLbl.Color = theme.DisabledColor()
+		dp.modsStatusLbl.Text = "Mod actions are hidden because this profile does not have a detected mod loader."
+		dp.modsStatusLbl.Refresh()
+		dp.modsStatusLbl.Show()
+	}
+	dp.checkShadersBtn.Show()
+	dp.searchShadersBtn.Show()
+	dp.modsFolderRow.Refresh()
+	dp.shadersFolderRow.Refresh()
 
 	if prof.Resolution != nil {
 		dp.resWEntry.SetText(strconv.Itoa(prof.Resolution.Width))

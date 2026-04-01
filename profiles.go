@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 )
 
@@ -215,6 +216,72 @@ func ResolveModsFolder(prof *Profile, launcherProfilesPath string) string {
 		base = prof.GameDir
 	}
 	return filepath.Join(base, "mods")
+}
+
+// ResolveShadersFolder determines the shaderpacks folder for a profile.
+func ResolveShadersFolder(prof *Profile, launcherProfilesPath string) string {
+	mcDir := filepath.Dir(launcherProfilesPath)
+	base := mcDir
+	if prof.GameDir != "" {
+		base = prof.GameDir
+	}
+	return filepath.Join(base, "shaderpacks")
+}
+
+// ResolveGameVersion extracts the base Minecraft version for a profile.
+// It checks the version JSON for inheritsFrom, falling back to the version ID itself.
+func ResolveGameVersion(prof *Profile, launcherProfilesPath string) string {
+	if prof.LastVersionId == "" {
+		return ""
+	}
+
+	mcDir := filepath.Dir(launcherProfilesPath)
+	versionJSON := filepath.Join(mcDir, "versions", prof.LastVersionId, prof.LastVersionId+".json")
+	if data, err := os.ReadFile(versionJSON); err == nil {
+		var vd struct {
+			InheritsFrom string `json:"inheritsFrom"`
+		}
+		if json.Unmarshal(data, &vd) == nil && vd.InheritsFrom != "" {
+			return vd.InheritsFrom
+		}
+	}
+
+	// If no inheritsFrom, the version ID is the MC version itself
+	return prof.LastVersionId
+}
+
+// ResolveLoader detects the mod loader for a profile from its version JSON.
+// Returns "fabric", "forge", "neoforge", "quilt", or "" if unknown.
+func ResolveLoader(prof *Profile, launcherProfilesPath string) string {
+	if prof.LastVersionId == "" {
+		return ""
+	}
+
+	mcDir := filepath.Dir(launcherProfilesPath)
+	versionJSON := filepath.Join(mcDir, "versions", prof.LastVersionId, prof.LastVersionId+".json")
+	data, err := os.ReadFile(versionJSON)
+	if err != nil {
+		return ""
+	}
+
+	var vd struct {
+		MainClass string `json:"mainClass"`
+	}
+	if json.Unmarshal(data, &vd) != nil {
+		return ""
+	}
+
+	switch {
+	case strings.Contains(vd.MainClass, "fabricmc") || strings.Contains(vd.MainClass, "fabric"):
+		return "fabric"
+	case strings.Contains(vd.MainClass, "quilt"):
+		return "quilt"
+	case strings.Contains(vd.MainClass, "neoforge"):
+		return "neoforge"
+	case strings.Contains(vd.MainClass, "forge"):
+		return "forge"
+	}
+	return ""
 }
 
 func extractModsFolder(arg string) (string, bool) {
