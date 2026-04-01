@@ -4,17 +4,83 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	neturl "net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 const modrinthAPI = "https://api.modrinth.com/v2"
 const searchResultLimit = 10
+
+var modrinthHTTPClient = &http.Client{
+	Timeout: 30 * time.Second,
+}
+
+func isRetryableHTTPError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && (netErr.Timeout() || netErr.Temporary()) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "tls handshake timeout") ||
+		strings.Contains(msg, "timeout awaiting response headers") ||
+		strings.Contains(msg, "connection reset by peer") ||
+		strings.Contains(msg, "unexpected eof")
+}
+
+func isRetryableStatus(code int) bool {
+	switch code {
+	case http.StatusRequestTimeout, http.StatusTooManyRequests,
+		http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return true
+	default:
+		return false
+	}
+}
+
+func doRequestWithRetry(req *http.Request) (*http.Response, error) {
+	const maxAttempts = 3
+
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		cloned := req.Clone(req.Context())
+		if req.GetBody != nil {
+			body, err := req.GetBody()
+			if err != nil {
+				return nil, err
+			}
+			cloned.Body = body
+		}
+
+		resp, err := modrinthHTTPClient.Do(cloned)
+		if err == nil {
+			if !isRetryableStatus(resp.StatusCode) || attempt == maxAttempts {
+				return resp, nil
+			}
+			resp.Body.Close()
+			lastErr = fmt.Errorf("temporary HTTP %d", resp.StatusCode)
+		} else {
+			if !isRetryableHTTPError(err) || attempt == maxAttempts {
+				return nil, err
+			}
+			lastErr = err
+		}
+
+		time.Sleep(time.Duration(attempt) * 750 * time.Millisecond)
+	}
+
+	return nil, lastErr
+}
 
 // ModrinthVersion represents a version returned by the Modrinth API.
 type ModrinthVersion struct {
@@ -176,7 +242,7 @@ func modrinthPost(endpoint string, body any) ([]byte, error) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "MCProfiles/1.0 (https://github.com/sbehnke/MCProfiles)")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := doRequestWithRetry(req)
 	if err != nil {
 		return nil, err
 	}
@@ -200,7 +266,7 @@ func modrinthGet(endpoint string) ([]byte, error) {
 	}
 	req.Header.Set("User-Agent", "MCProfiles/1.0 (https://github.com/sbehnke/MCProfiles)")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := doRequestWithRetry(req)
 	if err != nil {
 		return nil, err
 	}
@@ -256,6 +322,14 @@ func CheckUpdates(hashes []string, loaders []string, gameVersions []string) (map
 	return result, nil
 }
 
+func checkUpdateForHash(hash string, loaders []string, gameVersions []string) (*ModrinthVersion, error) {
+	updates, err := CheckUpdates([]string{hash}, loaders, gameVersions)
+	if err != nil {
+		return nil, err
+	}
+	return updates[hash], nil
+}
+
 // LookupProjects fetches project info for multiple project IDs.
 func LookupProjects(ids []string) (map[string]*ModrinthProject, error) {
 	if len(ids) == 0 {
@@ -263,7 +337,7 @@ func LookupProjects(ids []string) (map[string]*ModrinthProject, error) {
 	}
 
 	idsJSON, _ := json.Marshal(ids)
-	data, err := modrinthGet("/projects?ids=" + string(idsJSON))
+	data, err := modrinthGet("/projects?ids=" + neturl.QueryEscape(string(idsJSON)))
 	if err != nil {
 		return nil, err
 	}
@@ -343,21 +417,6 @@ func CheckMods(modsDir string, gameVersion string) ([]ModInfo, error) {
 	}
 	if len(loaders) == 0 {
 		loaders = []string{"fabric", "forge", "neoforge", "quilt"}
-	}
-
-	// Check for updates
-	foundHashes := make([]string, 0)
-	for h := range versions {
-		foundHashes = append(foundHashes, h)
-	}
-
-	var updates map[string]*ModrinthVersion
-	if len(foundHashes) > 0 && gameVersion != "" {
-		updates, err = CheckUpdates(foundHashes, loaders, []string{gameVersion})
-		if err != nil {
-			// Non-fatal: we still have the lookup results
-			updates = nil
-		}
 	}
 
 	// Collect project IDs for title lookup
@@ -453,9 +512,14 @@ func CheckMods(modsDir string, gameVersion string) ([]ModInfo, error) {
 			}
 		}
 
-		// Check for updates
-		if updates != nil {
-			if latest, ok := updates[hash]; ok {
+		// Check for updates using this mod's current loader branch.
+		if gameVersion != "" {
+			modLoaders := v.Loaders
+			if len(modLoaders) == 0 && info.JarMeta != nil && info.JarMeta.Loader != "" {
+				modLoaders = []string{info.JarMeta.Loader}
+			}
+			latest, updateErr := checkUpdateForHash(hash, modLoaders, []string{gameVersion})
+			if updateErr == nil && latest != nil {
 				info.LatestVersion = latest.VersionNumber
 				info.HasUpdate = latest.VersionNumber != v.VersionNumber
 				if info.HasUpdate {
@@ -497,7 +561,7 @@ func DownloadMod(mod ModInfo) (string, error) {
 	}
 	req.Header.Set("User-Agent", "MCProfiles/1.0 (https://github.com/sbehnke/MCProfiles)")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := doRequestWithRetry(req)
 	if err != nil {
 		return "", fmt.Errorf("downloading: %w", err)
 	}
@@ -574,6 +638,7 @@ func FindMissingDependencies(mods []ModInfo, projects map[string]*ModrinthProjec
 				}
 				missing = append(missing, MissingDep{
 					ProjectID:    dep.ProjectID,
+					VersionID:    dep.VersionID,
 					ProjectTitle: title,
 					RequiredBy:   requiredBy,
 				})
@@ -684,6 +749,7 @@ func InstalledShaderMap(shadersDir string) map[string]string {
 // MissingDep represents a required dependency that is not installed.
 type MissingDep struct {
 	ProjectID    string
+	VersionID    string
 	ProjectTitle string
 	RequiredBy   string
 }
@@ -776,6 +842,20 @@ func GetProjectVersions(projectID string, loaders []string, gameVersions []strin
 	return versions, nil
 }
 
+// GetVersion fetches a specific Modrinth version by version ID.
+func GetVersion(versionID string) (*ModrinthVersion, error) {
+	data, err := modrinthGet("/version/" + versionID)
+	if err != nil {
+		return nil, err
+	}
+
+	var version ModrinthVersion
+	if err := json.Unmarshal(data, &version); err != nil {
+		return nil, err
+	}
+	return &version, nil
+}
+
 // InstallModFromVersion downloads a mod version file to the mods directory.
 // Returns the path to the downloaded file.
 func InstallModFromVersion(version *ModrinthVersion, modsDir string) (string, error) {
@@ -786,20 +866,7 @@ func InstallModFromVersion(version *ModrinthVersion, modsDir string) (string, er
 	return downloadToDir(dlURL, filename, modsDir)
 }
 
-// InstallModWithDeps installs a mod and its required dependencies.
-// Returns a list of installed filenames and any error.
-func InstallModWithDeps(projectID string, modsDir string, loaders []string, gameVersions []string) ([]string, error) {
-	versions, err := GetProjectVersions(projectID, loaders, gameVersions)
-	if err != nil {
-		return nil, fmt.Errorf("fetching versions: %w", err)
-	}
-	if len(versions) == 0 {
-		return nil, fmt.Errorf("no compatible versions found")
-	}
-
-	// Use the first (latest) version
-	version := versions[0]
-
+func installVersionWithDeps(version *ModrinthVersion, modsDir string, loaders []string, gameVersions []string) ([]string, error) {
 	path, err := InstallModFromVersion(version, modsDir)
 	if err != nil {
 		return nil, fmt.Errorf("downloading mod: %w", err)
@@ -824,7 +891,6 @@ func InstallModWithDeps(projectID string, modsDir string, loaders []string, game
 			if err != nil {
 				continue
 			}
-			// Quick check: look up this hash
 			lookup, err := LookupVersionsByHash([]string{h})
 			if err != nil {
 				continue
@@ -838,11 +904,21 @@ func InstallModWithDeps(projectID string, modsDir string, loaders []string, game
 			continue
 		}
 
-		depVersions, err := GetProjectVersions(dep.ProjectID, loaders, gameVersions)
-		if err != nil || len(depVersions) == 0 {
+		var depVersion *ModrinthVersion
+		if dep.VersionID != "" {
+			depVersion, err = GetVersion(dep.VersionID)
+		} else {
+			var depVersions []*ModrinthVersion
+			depVersions, err = GetProjectVersions(dep.ProjectID, loaders, gameVersions)
+			if err == nil && len(depVersions) > 0 {
+				depVersion = depVersions[0]
+			}
+		}
+		if err != nil || depVersion == nil {
 			continue
 		}
-		depPath, err := InstallModFromVersion(depVersions[0], modsDir)
+
+		depPath, err := InstallModFromVersion(depVersion, modsDir)
 		if err != nil {
 			continue
 		}
@@ -850,6 +926,36 @@ func InstallModWithDeps(projectID string, modsDir string, loaders []string, game
 	}
 
 	return installed, nil
+}
+
+// InstallModWithDeps installs a mod and its required dependencies.
+// Returns a list of installed filenames and any error.
+func InstallModWithDeps(projectID string, modsDir string, loaders []string, gameVersions []string) ([]string, error) {
+	versions, err := GetProjectVersions(projectID, loaders, gameVersions)
+	if err != nil {
+		return nil, fmt.Errorf("fetching versions: %w", err)
+	}
+	if len(versions) == 0 {
+		return nil, fmt.Errorf("no compatible versions found")
+	}
+
+	return installVersionWithDeps(versions[0], modsDir, loaders, gameVersions)
+}
+
+// InstallMissingDependency installs a missing dependency, preferring the exact
+// Modrinth version when one is specified.
+func InstallMissingDependency(dep MissingDep, modsDir string, loaders []string, gameVersions []string) ([]string, error) {
+	if dep.VersionID != "" {
+		version, err := GetVersion(dep.VersionID)
+		if err != nil {
+			return nil, fmt.Errorf("fetching dependency version: %w", err)
+		}
+		return installVersionWithDeps(version, modsDir, loaders, gameVersions)
+	}
+	if dep.ProjectID == "" {
+		return nil, fmt.Errorf("dependency is not available on Modrinth")
+	}
+	return InstallModWithDeps(dep.ProjectID, modsDir, loaders, gameVersions)
 }
 
 // UninstallMod removes a mod jar file.
@@ -865,7 +971,7 @@ func downloadToDir(dlURL, filename, dir string) (string, error) {
 	}
 	req.Header.Set("User-Agent", "MCProfiles/1.0 (https://github.com/sbehnke/MCProfiles)")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := doRequestWithRetry(req)
 	if err != nil {
 		return "", fmt.Errorf("downloading: %w", err)
 	}

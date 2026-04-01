@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/url"
 	"sort"
+	"strings"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
@@ -71,13 +72,13 @@ func showModsCheckDialog(modsDir string, gameVersion string, win fyne.Window) {
 
 		fyne.Do(func() {
 			progress.Hide()
-			showModsResultDialog(mods, missingDeps, projects, win)
+			showModsResultDialog(modsDir, gameVersion, mods, missingDeps, projects, win)
 		})
 	}()
 }
 
 // showModsResultDialog displays the results of a mod check.
-func showModsResultDialog(mods []ModInfo, missingDeps []MissingDep, projects map[string]*ModrinthProject, win fyne.Window) {
+func showModsResultDialog(modsDir string, gameVersion string, mods []ModInfo, missingDeps []MissingDep, projects map[string]*ModrinthProject, win fyne.Window) {
 	// Summary and Update All button — declared early so update callbacks can refresh them
 	summary := widget.NewLabel("")
 	updateAllBtn := widget.NewButton("", nil)
@@ -262,22 +263,55 @@ func showModsResultDialog(mods []ModInfo, missingDeps []MissingDep, projects map
 		depHeader := widget.NewLabel("Missing Required Dependencies:")
 		depHeader.TextStyle = fyne.TextStyle{Bold: true}
 
-		depList := widget.NewList(
+		var depList *widget.List
+		depList = widget.NewList(
 			func() int { return len(missingDeps) },
 			func() fyne.CanvasObject {
 				icon := widget.NewIcon(theme.WarningIcon())
 				name := widget.NewLabel("Dependency")
 				info := widget.NewLabel("required by")
-				return container.NewHBox(icon, name, info)
+				installBtn := widget.NewButton("Install", nil)
+				installBtn.Importance = widget.HighImportance
+				infoBox := container.NewVBox(name, info)
+				return container.NewBorder(nil, nil, icon, installBtn, infoBox)
 			},
 			func(id widget.ListItemID, obj fyne.CanvasObject) {
 				row := obj.(*fyne.Container)
-				name := row.Objects[1].(*widget.Label)
-				info := row.Objects[2].(*widget.Label)
+				infoBox := row.Objects[0].(*fyne.Container)
+				name := infoBox.Objects[0].(*widget.Label)
+				info := infoBox.Objects[1].(*widget.Label)
+				installBtn := row.Objects[2].(*widget.Button)
 
 				dep := missingDeps[id]
 				name.SetText(dep.ProjectTitle)
 				info.SetText(fmt.Sprintf("(required by %s)", dep.RequiredBy))
+
+				if dep.ProjectID == "" {
+					installBtn.Hide()
+					return
+				}
+
+				installBtn.Show()
+				installBtn.SetText("Install")
+				installBtn.Enable()
+				installBtn.OnTapped = func() {
+					installBtn.Disable()
+					installBtn.SetText("...")
+					go func() {
+						installed, err := InstallMissingDependency(dep, modsDir, nil, []string{gameVersion})
+						fyne.Do(func() {
+							if err != nil {
+								installBtn.SetText("Retry")
+								installBtn.Enable()
+								dialog.ShowError(fmt.Errorf("Failed to install %s: %w", dep.ProjectTitle, err), win)
+								return
+							}
+							missingDeps = append(missingDeps[:id], missingDeps[id+1:]...)
+							depList.Refresh()
+							dialog.ShowInformation("Installed", fmt.Sprintf("Installed: %s", strings.Join(installed, ", ")), win)
+						})
+					}()
+				}
 			},
 		)
 

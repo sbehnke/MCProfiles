@@ -146,6 +146,10 @@ Produces 4 archives in `build/release/`:
 
 Requires Docker with buildx. On Apple Silicon, arm64 containers run natively and amd64 via Rosetta.
 
+### GitHub Actions release build
+
+Linux and Windows release archives can also be built in GitHub Actions by pushing a `v*` tag. The workflow uploads the Docker-built artifacts to the matching GitHub release. macOS remains a local build because signing and notarization use local Apple credentials.
+
 ### Quick build (any platform, no packaging)
 
 ```bash
