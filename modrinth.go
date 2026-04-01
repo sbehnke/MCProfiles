@@ -330,6 +330,18 @@ func checkUpdateForHash(hash string, loaders []string, gameVersions []string) (*
 	return updates[hash], nil
 }
 
+func versionSupportsGameVersion(v *ModrinthVersion, gameVersion string) bool {
+	if v == nil || gameVersion == "" {
+		return true
+	}
+	for _, gv := range v.GameVersions {
+		if gv == gameVersion {
+			return true
+		}
+	}
+	return false
+}
+
 // LookupProjects fetches project info for multiple project IDs.
 func LookupProjects(ids []string) (map[string]*ModrinthProject, error) {
 	if len(ids) == 0 {
@@ -467,10 +479,12 @@ func CheckMods(modsDir string, gameVersion string) ([]ModInfo, error) {
 					slugVersions, err := GetProjectVersions(proj.ID, loaders, []string{gameVersion})
 					if err == nil && len(slugVersions) > 0 {
 						latest := slugVersions[0]
-						info.LatestVersion = latest.VersionNumber
-						info.HasUpdate = latest.VersionNumber != info.JarMeta.Version
-						if info.HasUpdate {
-							info.UpdateURL, info.UpdateFilename = primaryFileURL(latest)
+						if versionSupportsGameVersion(latest, gameVersion) {
+							info.LatestVersion = latest.VersionNumber
+							info.HasUpdate = latest.VersionNumber != info.JarMeta.Version
+							if info.HasUpdate {
+								info.UpdateURL, info.UpdateFilename = primaryFileURL(latest)
+							}
 						}
 						// Collect dependencies from the latest version
 						for _, dep := range latest.Dependencies {
@@ -519,7 +533,7 @@ func CheckMods(modsDir string, gameVersion string) ([]ModInfo, error) {
 				modLoaders = []string{info.JarMeta.Loader}
 			}
 			latest, updateErr := checkUpdateForHash(hash, modLoaders, []string{gameVersion})
-			if updateErr == nil && latest != nil {
+			if updateErr == nil && latest != nil && versionSupportsGameVersion(latest, gameVersion) {
 				info.LatestVersion = latest.VersionNumber
 				info.HasUpdate = latest.VersionNumber != v.VersionNumber
 				if info.HasUpdate {
@@ -910,7 +924,7 @@ func installVersionWithDeps(version *ModrinthVersion, modsDir string, loaders []
 		} else {
 			var depVersions []*ModrinthVersion
 			depVersions, err = GetProjectVersions(dep.ProjectID, loaders, gameVersions)
-			if err == nil && len(depVersions) > 0 {
+			if err == nil && len(depVersions) > 0 && versionSupportsGameVersion(depVersions[0], firstGameVersion(gameVersions)) {
 				depVersion = depVersions[0]
 			}
 		}
@@ -935,11 +949,18 @@ func InstallModWithDeps(projectID string, modsDir string, loaders []string, game
 	if err != nil {
 		return nil, fmt.Errorf("fetching versions: %w", err)
 	}
-	if len(versions) == 0 {
+	if len(versions) == 0 || !versionSupportsGameVersion(versions[0], firstGameVersion(gameVersions)) {
 		return nil, fmt.Errorf("no compatible versions found")
 	}
 
 	return installVersionWithDeps(versions[0], modsDir, loaders, gameVersions)
+}
+
+func firstGameVersion(gameVersions []string) string {
+	if len(gameVersions) == 0 {
+		return ""
+	}
+	return gameVersions[0]
 }
 
 // InstallMissingDependency installs a missing dependency, preferring the exact
