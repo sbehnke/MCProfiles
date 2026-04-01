@@ -12,6 +12,7 @@ import (
 	neturl "net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -22,6 +23,8 @@ const searchResultLimit = 10
 var modrinthHTTPClient = &http.Client{
 	Timeout: 30 * time.Second,
 }
+
+var trailingVersionPattern = regexp.MustCompile(`(?:^|[+\-\s_])(mc)?(\d+\.\d+(?:\.\d+)?)$`)
 
 func isRetryableHTTPError(err error) bool {
 	if err == nil {
@@ -322,14 +325,6 @@ func CheckUpdates(hashes []string, loaders []string, gameVersions []string) (map
 	return result, nil
 }
 
-func checkUpdateForHash(hash string, loaders []string, gameVersions []string) (*ModrinthVersion, error) {
-	updates, err := CheckUpdates([]string{hash}, loaders, gameVersions)
-	if err != nil {
-		return nil, err
-	}
-	return updates[hash], nil
-}
-
 func versionSupportsGameVersion(v *ModrinthVersion, gameVersion string) bool {
 	if v == nil || gameVersion == "" {
 		return true
@@ -340,6 +335,37 @@ func versionSupportsGameVersion(v *ModrinthVersion, gameVersion string) bool {
 		}
 	}
 	return false
+}
+
+func versionLabelMatchesGameVersion(v *ModrinthVersion, gameVersion string) bool {
+	if v == nil || gameVersion == "" {
+		return true
+	}
+
+	checks := []string{v.VersionNumber, v.Name}
+	for _, s := range checks {
+		matches := trailingVersionPattern.FindStringSubmatch(strings.ToLower(s))
+		if len(matches) == 3 {
+			return matches[2] == strings.ToLower(gameVersion)
+		}
+	}
+	return true
+}
+
+func pickBestVersion(versions []*ModrinthVersion, gameVersion string) *ModrinthVersion {
+	var fallback *ModrinthVersion
+	for _, v := range versions {
+		if !versionSupportsGameVersion(v, gameVersion) {
+			continue
+		}
+		if versionLabelMatchesGameVersion(v, gameVersion) {
+			return v
+		}
+		if fallback == nil {
+			fallback = v
+		}
+	}
+	return fallback
 }
 
 // LookupProjects fetches project info for multiple project IDs.
@@ -478,8 +504,8 @@ func CheckMods(modsDir string, gameVersion string) ([]ModInfo, error) {
 					// Check for latest version
 					slugVersions, err := GetProjectVersions(proj.ID, loaders, []string{gameVersion})
 					if err == nil && len(slugVersions) > 0 {
-						latest := slugVersions[0]
-						if versionSupportsGameVersion(latest, gameVersion) {
+						latest := pickBestVersion(slugVersions, gameVersion)
+						if latest != nil {
 							info.LatestVersion = latest.VersionNumber
 							info.HasUpdate = latest.VersionNumber != info.JarMeta.Version
 							if info.HasUpdate {
@@ -532,8 +558,9 @@ func CheckMods(modsDir string, gameVersion string) ([]ModInfo, error) {
 			if len(modLoaders) == 0 && info.JarMeta != nil && info.JarMeta.Loader != "" {
 				modLoaders = []string{info.JarMeta.Loader}
 			}
-			latest, updateErr := checkUpdateForHash(hash, modLoaders, []string{gameVersion})
-			if updateErr == nil && latest != nil && versionSupportsGameVersion(latest, gameVersion) {
+			latestVersions, updateErr := GetProjectVersions(v.ProjectID, modLoaders, []string{gameVersion})
+			latest := pickBestVersion(latestVersions, gameVersion)
+			if updateErr == nil && latest != nil {
 				info.LatestVersion = latest.VersionNumber
 				info.HasUpdate = latest.VersionNumber != v.VersionNumber
 				if info.HasUpdate {
@@ -798,6 +825,13 @@ func SearchMods(query string, gameVersion string, loader string) (*ModrinthSearc
 	if len(resp.Hits) == 0 && facets != baseFacets {
 		return searchProjects(query, baseFacets)
 	}
+	if gameVersion != "" {
+		loaders := []string{}
+		if loader != "" {
+			loaders = []string{loader}
+		}
+		resp.Hits = filterSearchHitsByCompatibility(resp.Hits, loaders, []string{gameVersion})
+	}
 	return resp, nil
 }
 
@@ -824,7 +858,30 @@ func SearchShaders(query string, gameVersion string) (*ModrinthSearchResponse, e
 	if len(resp.Hits) == 0 && facets != baseFacets {
 		return searchProjects(query, baseFacets)
 	}
+	if gameVersion != "" {
+		resp.Hits = filterSearchHitsByCompatibility(resp.Hits, nil, []string{gameVersion})
+	}
 	return resp, nil
+}
+
+func filterSearchHitsByCompatibility(hits []ModrinthSearchResult, loaders []string, gameVersions []string) []ModrinthSearchResult {
+	if len(hits) == 0 {
+		return hits
+	}
+
+	filtered := make([]ModrinthSearchResult, 0, len(hits))
+	for _, hit := range hits {
+		versions, err := GetProjectVersions(hit.ProjectID, loaders, gameVersions)
+		if err != nil || len(versions) == 0 {
+			continue
+		}
+		best := pickBestVersion(versions, firstGameVersion(gameVersions))
+		if best == nil {
+			continue
+		}
+		filtered = append(filtered, hit)
+	}
+	return filtered
 }
 
 // GetProjectVersions returns versions for a project, optionally filtered.
@@ -924,8 +981,8 @@ func installVersionWithDeps(version *ModrinthVersion, modsDir string, loaders []
 		} else {
 			var depVersions []*ModrinthVersion
 			depVersions, err = GetProjectVersions(dep.ProjectID, loaders, gameVersions)
-			if err == nil && len(depVersions) > 0 && versionSupportsGameVersion(depVersions[0], firstGameVersion(gameVersions)) {
-				depVersion = depVersions[0]
+			if err == nil && len(depVersions) > 0 {
+				depVersion = pickBestVersion(depVersions, firstGameVersion(gameVersions))
 			}
 		}
 		if err != nil || depVersion == nil {
@@ -949,11 +1006,12 @@ func InstallModWithDeps(projectID string, modsDir string, loaders []string, game
 	if err != nil {
 		return nil, fmt.Errorf("fetching versions: %w", err)
 	}
-	if len(versions) == 0 || !versionSupportsGameVersion(versions[0], firstGameVersion(gameVersions)) {
+	version := pickBestVersion(versions, firstGameVersion(gameVersions))
+	if version == nil {
 		return nil, fmt.Errorf("no compatible versions found")
 	}
 
-	return installVersionWithDeps(versions[0], modsDir, loaders, gameVersions)
+	return installVersionWithDeps(version, modsDir, loaders, gameVersions)
 }
 
 func firstGameVersion(gameVersions []string) string {
