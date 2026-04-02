@@ -92,6 +92,7 @@ type ModrinthVersion struct {
 	Name          string                `json:"name"`
 	VersionNumber string                `json:"version_number"`
 	VersionType   string                `json:"version_type"`
+	DatePublished time.Time             `json:"date_published"`
 	GameVersions  []string              `json:"game_versions"`
 	Loaders       []string              `json:"loaders"`
 	Dependencies  []ModrinthDependency  `json:"dependencies"`
@@ -180,6 +181,7 @@ type ModInfo struct {
 	ProjectID      string
 	ProjectTitle   string
 	CurrentVersion string
+	Loaders        []string
 	LatestVersion  string
 	HasUpdate      bool
 	UpdateURL      string // download URL for the latest version
@@ -379,6 +381,20 @@ func pickBestVersion(versions []*ModrinthVersion, gameVersion string) *ModrinthV
 	return fallback
 }
 
+func compatibleVersions(versions []*ModrinthVersion, gameVersion string) []*ModrinthVersion {
+	filtered := make([]*ModrinthVersion, 0, len(versions))
+	for _, v := range versions {
+		if !versionIsStable(v) {
+			continue
+		}
+		if !versionSupportsGameVersion(v, gameVersion) {
+			continue
+		}
+		filtered = append(filtered, v)
+	}
+	return filtered
+}
+
 // LookupProjects fetches project info for multiple project IDs.
 func LookupProjects(ids []string) (map[string]*ModrinthProject, error) {
 	if len(ids) == 0 {
@@ -549,6 +565,7 @@ func CheckMods(modsDir string, gameVersion string) ([]ModInfo, error) {
 		info.Found = true
 		info.ProjectID = v.ProjectID
 		info.CurrentVersion = v.VersionNumber
+		info.Loaders = append([]string(nil), v.Loaders...)
 
 		if projects != nil {
 			if p, ok := projects[v.ProjectID]; ok {
@@ -924,6 +941,14 @@ func GetProjectVersions(projectID string, loaders []string, gameVersions []strin
 	return versions, nil
 }
 
+func ListCompatibleVersions(projectID string, loaders []string, gameVersions []string) ([]*ModrinthVersion, error) {
+	versions, err := GetProjectVersions(projectID, loaders, gameVersions)
+	if err != nil {
+		return nil, err
+	}
+	return compatibleVersions(versions, firstGameVersion(gameVersions)), nil
+}
+
 // GetVersion fetches a specific Modrinth version by version ID.
 func GetVersion(versionID string) (*ModrinthVersion, error) {
 	data, err := modrinthGet("/version/" + versionID)
@@ -1016,7 +1041,7 @@ func installVersionWithDeps(version *ModrinthVersion, modsDir string, loaders []
 // InstallModWithDeps installs a mod and its required dependencies.
 // Returns a list of installed filenames and any error.
 func InstallModWithDeps(projectID string, modsDir string, loaders []string, gameVersions []string) ([]string, error) {
-	versions, err := GetProjectVersions(projectID, loaders, gameVersions)
+	versions, err := ListCompatibleVersions(projectID, loaders, gameVersions)
 	if err != nil {
 		return nil, fmt.Errorf("fetching versions: %w", err)
 	}
@@ -1025,6 +1050,19 @@ func InstallModWithDeps(projectID string, modsDir string, loaders []string, game
 		return nil, fmt.Errorf("no compatible versions found")
 	}
 
+	return installVersionWithDeps(version, modsDir, loaders, gameVersions)
+}
+
+func InstallSpecificVersionWithDeps(version *ModrinthVersion, modsDir string, loaders []string, gameVersions []string) ([]string, error) {
+	if version == nil {
+		return nil, fmt.Errorf("no version selected")
+	}
+	if !versionIsStable(version) {
+		return nil, fmt.Errorf("pre-release versions are not supported")
+	}
+	if !versionSupportsGameVersion(version, firstGameVersion(gameVersions)) {
+		return nil, fmt.Errorf("version is not compatible with this profile")
+	}
 	return installVersionWithDeps(version, modsDir, loaders, gameVersions)
 }
 
@@ -1043,7 +1081,7 @@ func InstallMissingDependency(dep MissingDep, modsDir string, loaders []string, 
 		if err != nil {
 			return nil, fmt.Errorf("fetching dependency version: %w", err)
 		}
-		return installVersionWithDeps(version, modsDir, loaders, gameVersions)
+		return InstallSpecificVersionWithDeps(version, modsDir, loaders, gameVersions)
 	}
 	if dep.ProjectID == "" {
 		return nil, fmt.Errorf("dependency is not available on Modrinth")

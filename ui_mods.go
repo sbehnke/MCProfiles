@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"net/url"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -119,10 +120,11 @@ func showModsResultDialog(modsDir string, gameVersion string, mods []ModInfo, mi
 			version.Wrapping = fyne.TextWrapOff
 			updateBtn := widget.NewButton("Update", nil)
 			updateBtn.Importance = widget.HighImportance
+			advancedBtn := widget.NewButton("Advanced...", nil)
 			webBtn := widget.NewButtonWithIcon("", theme.ComputerIcon(), nil)
 			uninstallBtn := widget.NewButtonWithIcon("", theme.DeleteIcon(), nil)
 			uninstallBtn.Importance = widget.DangerImportance
-			buttons := container.NewHBox(updateBtn, webBtn, uninstallBtn)
+			buttons := container.NewHBox(updateBtn, advancedBtn, webBtn, uninstallBtn)
 			row := container.NewBorder(nil, nil,
 				container.NewHBox(icon, name), buttons, version)
 			return row
@@ -136,8 +138,9 @@ func showModsResultDialog(modsDir string, gameVersion string, mods []ModInfo, mi
 			icon := left.Objects[0].(*widget.Icon)
 			name := left.Objects[1].(*widget.Label)
 			updateBtn := buttons.Objects[0].(*widget.Button)
-			webBtn := buttons.Objects[1].(*widget.Button)
-			uninstallBtn := buttons.Objects[2].(*widget.Button)
+			advancedBtn := buttons.Objects[1].(*widget.Button)
+			webBtn := buttons.Objects[2].(*widget.Button)
+			uninstallBtn := buttons.Objects[3].(*widget.Button)
 
 			m := mods[id]
 
@@ -167,6 +170,71 @@ func showModsResultDialog(modsDir string, gameVersion string, mods []ModInfo, mi
 
 			// Web button — only for mods found on Modrinth
 			if m.Found {
+				advancedBtn.Show()
+				advancedBtn.OnTapped = func() {
+					loaders := m.Loaders
+					if len(loaders) == 0 && m.JarMeta != nil && m.JarMeta.Loader != "" {
+						loaders = []string{m.JarMeta.Loader}
+					}
+					gameVersions := []string{}
+					if gameVersion != "" {
+						gameVersions = []string{gameVersion}
+					}
+					showVersionPickerDialog(
+						"Select Mod Version",
+						displayName,
+						m.ProjectID,
+						m.CurrentVersion,
+						loaders,
+						gameVersions,
+						"Install",
+						win,
+						func(selected *ModrinthVersion, latest *ModrinthVersion) {
+							updateBtn.Disable()
+							advancedBtn.Disable()
+							go func() {
+								installed, err := InstallSpecificVersionWithDeps(selected, modsDir, loaders, gameVersions)
+								if err == nil && m.InstalledPath != "" {
+									newPrimary := ""
+									if len(selected.Files) > 0 {
+										newPrimary = filepath.Join(modsDir, selected.Files[0].Filename)
+									}
+									if newPrimary != "" && newPrimary != m.InstalledPath {
+										err = UninstallMod(m.InstalledPath)
+									}
+								}
+								fyne.Do(func() {
+									if err != nil {
+										updateBtn.Enable()
+										advancedBtn.Enable()
+										dialog.ShowError(fmt.Errorf("Failed to install %s: %w", displayName, err), win)
+										return
+									}
+									mods[id].CurrentVersion = selected.VersionNumber
+									if len(selected.Files) > 0 {
+										mods[id].InstalledPath = filepath.Join(modsDir, selected.Files[0].Filename)
+									}
+									if latest == nil {
+										latest = selected
+									}
+									mods[id].LatestVersion = latest.VersionNumber
+									mods[id].HasUpdate = latest.VersionNumber != selected.VersionNumber
+									if mods[id].HasUpdate {
+										mods[id].UpdateURL, mods[id].UpdateFilename = primaryFileURL(latest)
+										updateBtn.Show()
+									} else {
+										mods[id].UpdateURL = ""
+										mods[id].UpdateFilename = ""
+										updateBtn.Hide()
+									}
+									modList.Refresh()
+									refreshSummary()
+									dialog.ShowInformation("Installed", fmt.Sprintf("Installed: %s", strings.Join(installed, ", ")), win)
+								})
+							}()
+						},
+					)
+				}
 				webBtn.Show()
 				slug := m.ProjectID
 				if projects != nil {
@@ -179,6 +247,7 @@ func showModsResultDialog(modsDir string, gameVersion string, mods []ModInfo, mi
 					fyne.CurrentApp().OpenURL(u)
 				}
 			} else {
+				advancedBtn.Hide()
 				webBtn.Hide()
 			}
 
@@ -272,15 +341,19 @@ func showModsResultDialog(modsDir string, gameVersion string, mods []ModInfo, mi
 				info := widget.NewLabel("required by")
 				installBtn := widget.NewButton("Install", nil)
 				installBtn.Importance = widget.HighImportance
+				advancedBtn := widget.NewButton("Advanced...", nil)
 				infoBox := container.NewVBox(name, info)
-				return container.NewBorder(nil, nil, icon, installBtn, infoBox)
+				buttons := container.NewHBox(installBtn, advancedBtn)
+				return container.NewBorder(nil, nil, icon, buttons, infoBox)
 			},
 			func(id widget.ListItemID, obj fyne.CanvasObject) {
 				row := obj.(*fyne.Container)
 				infoBox := row.Objects[0].(*fyne.Container)
 				name := infoBox.Objects[0].(*widget.Label)
 				info := infoBox.Objects[1].(*widget.Label)
-				installBtn := row.Objects[2].(*widget.Button)
+				buttons := row.Objects[2].(*fyne.Container)
+				installBtn := buttons.Objects[0].(*widget.Button)
+				advancedBtn := buttons.Objects[1].(*widget.Button)
 
 				dep := missingDeps[id]
 				name.SetText(dep.ProjectTitle)
@@ -288,10 +361,12 @@ func showModsResultDialog(modsDir string, gameVersion string, mods []ModInfo, mi
 
 				if dep.ProjectID == "" {
 					installBtn.Hide()
+					advancedBtn.Hide()
 					return
 				}
 
 				installBtn.Show()
+				advancedBtn.Show()
 				installBtn.SetText("Install")
 				installBtn.Enable()
 				installBtn.OnTapped = func() {
@@ -311,6 +386,41 @@ func showModsResultDialog(modsDir string, gameVersion string, mods []ModInfo, mi
 							dialog.ShowInformation("Installed", fmt.Sprintf("Installed: %s", strings.Join(installed, ", ")), win)
 						})
 					}()
+				}
+				advancedBtn.Enable()
+				advancedBtn.OnTapped = func() {
+					gameVersions := []string{}
+					if gameVersion != "" {
+						gameVersions = []string{gameVersion}
+					}
+					showVersionPickerDialog(
+						"Select Dependency Version",
+						dep.ProjectTitle,
+						dep.ProjectID,
+						"",
+						nil,
+						gameVersions,
+						"Install",
+						win,
+						func(selected *ModrinthVersion, _ *ModrinthVersion) {
+							installBtn.Disable()
+							advancedBtn.Disable()
+							go func() {
+								installed, err := InstallSpecificVersionWithDeps(selected, modsDir, nil, gameVersions)
+								fyne.Do(func() {
+									if err != nil {
+										installBtn.Enable()
+										advancedBtn.Enable()
+										dialog.ShowError(fmt.Errorf("Failed to install %s: %w", dep.ProjectTitle, err), win)
+										return
+									}
+									missingDeps = append(missingDeps[:id], missingDeps[id+1:]...)
+									depList.Refresh()
+									dialog.ShowInformation("Installed", fmt.Sprintf("Installed: %s", strings.Join(installed, ", ")), win)
+								})
+							}()
+						},
+					)
 				}
 			},
 		)

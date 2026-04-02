@@ -226,12 +226,12 @@ func showShadersCheckDialog(shadersDir string, gameVersion string, win fyne.Wind
 
 		fyne.Do(func() {
 			progress.Hide()
-			showShadersResultDialog(shaders, win)
+			showShadersResultDialog(shaders, gameVersion, win)
 		})
 	}()
 }
 
-func showShadersResultDialog(shaders []ShaderInfo, win fyne.Window) {
+func showShadersResultDialog(shaders []ShaderInfo, gameVersion string, win fyne.Window) {
 	summary := widget.NewLabel("")
 	updateAllBtn := widget.NewButton("", nil)
 	updateAllBtn.Importance = widget.HighImportance
@@ -269,10 +269,11 @@ func showShadersResultDialog(shaders []ShaderInfo, win fyne.Window) {
 			version := widget.NewLabel("version")
 			updateBtn := widget.NewButton("Update", nil)
 			updateBtn.Importance = widget.HighImportance
+			advancedBtn := widget.NewButton("Advanced...", nil)
 			webBtn := widget.NewButtonWithIcon("", theme.ComputerIcon(), nil)
 			uninstallBtn := widget.NewButtonWithIcon("", theme.DeleteIcon(), nil)
 			uninstallBtn.Importance = widget.DangerImportance
-			buttons := container.NewHBox(updateBtn, webBtn, uninstallBtn)
+			buttons := container.NewHBox(updateBtn, advancedBtn, webBtn, uninstallBtn)
 			return container.NewBorder(nil, nil,
 				container.NewHBox(icon, name), buttons, version)
 		},
@@ -284,8 +285,9 @@ func showShadersResultDialog(shaders []ShaderInfo, win fyne.Window) {
 			icon := left.Objects[0].(*widget.Icon)
 			name := left.Objects[1].(*widget.Label)
 			updateBtn := buttons.Objects[0].(*widget.Button)
-			webBtn := buttons.Objects[1].(*widget.Button)
-			uninstallBtn := buttons.Objects[2].(*widget.Button)
+			advancedBtn := buttons.Objects[1].(*widget.Button)
+			webBtn := buttons.Objects[2].(*widget.Button)
+			uninstallBtn := buttons.Objects[3].(*widget.Button)
 
 			s := shaders[id]
 			displayName := s.ProjectTitle
@@ -312,15 +314,71 @@ func showShadersResultDialog(shaders []ShaderInfo, win fyne.Window) {
 					}, win)
 			}
 
-			// Web
-			if s.Found && s.ProjectSlug != "" {
-				webBtn.Show()
-				slug := s.ProjectSlug
-				webBtn.OnTapped = func() {
-					u, _ := url.Parse("https://modrinth.com/shader/" + slug)
-					fyne.CurrentApp().OpenURL(u)
+			if s.Found {
+				advancedBtn.Show()
+				advancedBtn.OnTapped = func() {
+					gameVersions := []string{}
+					if gameVersion != "" {
+						gameVersions = []string{gameVersion}
+					}
+					showVersionPickerDialog(
+						"Select Shader Version",
+						displayName,
+						s.ProjectID,
+						s.CurrentVersion,
+						nil,
+						gameVersions,
+						"Install",
+						win,
+						func(selected *ModrinthVersion, latest *ModrinthVersion) {
+							updateBtn.Disable()
+							advancedBtn.Disable()
+							go func() {
+								dlURL, filename := primaryFileURL(selected)
+								newPath, err := downloadAndReplace(dlURL, filename, s.Path)
+								fyne.Do(func() {
+									if err != nil {
+										updateBtn.Enable()
+										advancedBtn.Enable()
+										dialog.ShowError(fmt.Errorf("Failed to install %s: %w", displayName, err), win)
+										return
+									}
+									shaders[id].Path = newPath
+									shaders[id].Filename = filepath.Base(newPath)
+									shaders[id].CurrentVersion = selected.VersionNumber
+									if latest == nil {
+										latest = selected
+									}
+									shaders[id].LatestVersion = latest.VersionNumber
+									shaders[id].HasUpdate = latest.VersionNumber != selected.VersionNumber
+									if shaders[id].HasUpdate {
+										shaders[id].UpdateURL, shaders[id].UpdateFilename = primaryFileURL(latest)
+										updateBtn.Show()
+									} else {
+										shaders[id].UpdateURL = ""
+										shaders[id].UpdateFilename = ""
+										updateBtn.Hide()
+									}
+									shaderList.Refresh()
+									refreshSummary()
+									dialog.ShowInformation("Installed", fmt.Sprintf("Installed: %s", filepath.Base(newPath)), win)
+								})
+							}()
+						},
+					)
+				}
+				if s.ProjectSlug != "" {
+					webBtn.Show()
+					slug := s.ProjectSlug
+					webBtn.OnTapped = func() {
+						u, _ := url.Parse("https://modrinth.com/shader/" + slug)
+						fyne.CurrentApp().OpenURL(u)
+					}
+				} else {
+					webBtn.Hide()
 				}
 			} else {
+				advancedBtn.Hide()
 				webBtn.Hide()
 			}
 
@@ -440,8 +498,9 @@ func showShaderSearchDialog(shadersDir string, gameVersion string, win fyne.Wind
 			desc.Truncation = fyne.TextTruncateEllipsis
 			actionBtn := widget.NewButtonWithIcon("Install", theme.DownloadIcon(), nil)
 			actionBtn.Importance = widget.HighImportance
+			advancedBtn := widget.NewButton("Advanced...", nil)
 			webBtn := widget.NewButtonWithIcon("Web", theme.ComputerIcon(), nil)
-			buttons := container.NewHBox(actionBtn, webBtn)
+			buttons := container.NewHBox(actionBtn, advancedBtn, webBtn)
 			info := container.NewVBox(titleRow, desc)
 			title.SetText(r.Title)
 			desc.SetText(r.Description)
@@ -452,6 +511,7 @@ func showShaderSearchDialog(shadersDir string, gameVersion string, win fyne.Wind
 				actionBtn.SetText("Uninstall")
 				actionBtn.SetIcon(theme.DeleteIcon())
 				actionBtn.Importance = widget.DangerImportance
+				advancedBtn.Hide()
 				actionBtn.Enable()
 				actionBtn.OnTapped = func() {
 					dialog.ShowConfirm("Uninstall Shader",
@@ -472,23 +532,32 @@ func showShaderSearchDialog(shadersDir string, gameVersion string, win fyne.Wind
 				actionBtn.SetText("Install")
 				actionBtn.SetIcon(theme.DownloadIcon())
 				actionBtn.Importance = widget.HighImportance
+				advancedBtn.Show()
 				actionBtn.Enable()
-				actionBtn.OnTapped = func() {
-					actionBtn.Disable()
-					actionBtn.SetText("...")
-
-					gameVersions := []string{}
-					if gameVersion != "" {
-						gameVersions = []string{gameVersion}
+				gameVersions := []string{}
+				if gameVersion != "" {
+					gameVersions = []string{gameVersion}
+				}
+				setBusy := func(busy bool) {
+					if busy {
+						actionBtn.Disable()
+						advancedBtn.Disable()
+						actionBtn.SetText("...")
+						return
 					}
+					actionBtn.Enable()
+					advancedBtn.Enable()
+					actionBtn.SetText("Install")
+				}
 
+				actionBtn.OnTapped = func() {
+					setBusy(true)
 					go func() {
-						versions, err := GetProjectVersions(r.ProjectID, []string{}, gameVersions)
+						versions, err := ListCompatibleVersions(r.ProjectID, nil, gameVersions)
 						if err != nil || len(versions) == 0 {
 							fyne.Do(func() {
-								actionBtn.SetText("Failed")
-								actionBtn.Enable()
-								errMsg := "no compatible version found"
+								setBusy(false)
+								errMsg := "no compatible stable version found"
 								if err != nil {
 									errMsg = err.Error()
 								}
@@ -497,12 +566,11 @@ func showShaderSearchDialog(shadersDir string, gameVersion string, win fyne.Wind
 							return
 						}
 
-						dlURL, filename := primaryFileURL(versions[0])
+						dlURL, filename := primaryFileURL(pickBestVersion(versions, firstGameVersion(gameVersions)))
 						_, dlErr := downloadToDir(dlURL, filename, shadersDir)
 						fyne.Do(func() {
 							if dlErr != nil {
-								actionBtn.SetText("Failed")
-								actionBtn.Enable()
+								setBusy(false)
 								dialog.ShowError(fmt.Errorf("Failed to install %s: %w", r.Title, dlErr), win)
 								return
 							}
@@ -510,6 +578,35 @@ func showShaderSearchDialog(shadersDir string, gameVersion string, win fyne.Wind
 							dialog.ShowInformation("Installed", fmt.Sprintf("Installed: %s", filename), win)
 						})
 					}()
+				}
+
+				advancedBtn.OnTapped = func() {
+					showVersionPickerDialog(
+						"Select Shader Version",
+						r.Title,
+						r.ProjectID,
+						"",
+						nil,
+						gameVersions,
+						"Install",
+						win,
+						func(selected *ModrinthVersion, _ *ModrinthVersion) {
+							setBusy(true)
+							go func() {
+								dlURL, filename := primaryFileURL(selected)
+								_, dlErr := downloadToDir(dlURL, filename, shadersDir)
+								fyne.Do(func() {
+									if dlErr != nil {
+										setBusy(false)
+										dialog.ShowError(fmt.Errorf("Failed to install %s: %w", r.Title, dlErr), win)
+										return
+									}
+									refreshInstalledMap()
+									dialog.ShowInformation("Installed", fmt.Sprintf("Installed: %s", filename), win)
+								})
+							}()
+						},
+					)
 				}
 			}
 

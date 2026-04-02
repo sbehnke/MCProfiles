@@ -49,8 +49,9 @@ func showModSearchDialog(modsDir string, gameVersion string, loader string, win 
 			desc.Truncation = fyne.TextTruncateEllipsis
 			actionBtn := widget.NewButtonWithIcon("Install", theme.DownloadIcon(), nil)
 			actionBtn.Importance = widget.HighImportance
+			advancedBtn := widget.NewButton("Advanced...", nil)
 			webBtn := widget.NewButtonWithIcon("Web", theme.ComputerIcon(), nil)
-			buttons := container.NewHBox(actionBtn, webBtn)
+			buttons := container.NewHBox(actionBtn, advancedBtn, webBtn)
 			info := container.NewVBox(titleRow, desc)
 			title.SetText(r.Title)
 			desc.SetText(r.Description)
@@ -61,6 +62,7 @@ func showModSearchDialog(modsDir string, gameVersion string, loader string, win 
 				actionBtn.SetText("Uninstall")
 				actionBtn.SetIcon(theme.DeleteIcon())
 				actionBtn.Importance = widget.DangerImportance
+				advancedBtn.Hide()
 				actionBtn.Enable()
 				actionBtn.OnTapped = func() {
 					dialog.ShowConfirm("Uninstall Mod",
@@ -81,41 +83,30 @@ func showModSearchDialog(modsDir string, gameVersion string, loader string, win 
 				actionBtn.SetText("Install")
 				actionBtn.SetIcon(theme.DownloadIcon())
 				actionBtn.Importance = widget.HighImportance
+				advancedBtn.Show()
 				actionBtn.Enable()
-				actionBtn.OnTapped = func() {
-					modLoaders := r.Loaders()
-					gameVersions := []string{}
-					if gameVersion != "" {
-						gameVersions = []string{gameVersion}
-					}
-
-					doInstall := func(selectedLoader string) {
+				setBusy := func(busy bool) {
+					if busy {
 						actionBtn.Disable()
+						advancedBtn.Disable()
 						actionBtn.SetText("...")
-						loaders := []string{}
-						if selectedLoader != "" {
-							loaders = []string{selectedLoader}
-						}
-						go func() {
-							installed, err := InstallModWithDeps(r.ProjectID, modsDir, loaders, gameVersions)
-							fyne.Do(func() {
-								if err != nil {
-									actionBtn.SetText("Failed")
-									actionBtn.Enable()
-									dialog.ShowError(fmt.Errorf("Failed to install %s: %w", r.Title, err), win)
-									return
-								}
-								msg := fmt.Sprintf("Installed: %s", strings.Join(installed, ", "))
-								refreshInstalledMap()
-								dialog.ShowInformation("Installed", msg, win)
-							})
-						}()
+						return
 					}
+					actionBtn.Enable()
+					advancedBtn.Enable()
+					actionBtn.SetText("Install")
+				}
+				modLoaders := r.Loaders()
+				gameVersions := []string{}
+				if gameVersion != "" {
+					gameVersions = []string{gameVersion}
+				}
 
+				chooseLoader := func(confirmText string, onSelected func(string)) {
 					if loader != "" {
 						for _, ml := range modLoaders {
 							if ml == loader {
-								doInstall(loader)
+								onSelected(loader)
 								return
 							}
 						}
@@ -126,7 +117,7 @@ func showModSearchDialog(modsDir string, gameVersion string, loader string, win 
 						if len(modLoaders) == 1 {
 							selected = modLoaders[0]
 						}
-						doInstall(selected)
+						onSelected(selected)
 						return
 					}
 
@@ -137,14 +128,70 @@ func showModSearchDialog(modsDir string, gameVersion string, loader string, win 
 						loaderSelect.SetSelected(modLoaders[0])
 					}
 					d := dialog.NewForm("Select Loader",
-						"Install", "Cancel",
+						confirmText, "Cancel",
 						[]*widget.FormItem{widget.NewFormItem("Loader", loaderSelect)},
 						func(ok bool) {
 							if ok && loaderSelect.Selected != "" {
-								doInstall(loaderSelect.Selected)
+								onSelected(loaderSelect.Selected)
 							}
 						}, win)
 					d.Show()
+				}
+
+				actionBtn.OnTapped = func() {
+					chooseLoader("Install", func(selectedLoader string) {
+						setBusy(true)
+						loaders := []string{}
+						if selectedLoader != "" {
+							loaders = []string{selectedLoader}
+						}
+						go func() {
+							installed, err := InstallModWithDeps(r.ProjectID, modsDir, loaders, gameVersions)
+							fyne.Do(func() {
+								if err != nil {
+									setBusy(false)
+									dialog.ShowError(fmt.Errorf("Failed to install %s: %w", r.Title, err), win)
+									return
+								}
+								refreshInstalledMap()
+								dialog.ShowInformation("Installed", fmt.Sprintf("Installed: %s", strings.Join(installed, ", ")), win)
+							})
+						}()
+					})
+				}
+
+				advancedBtn.OnTapped = func() {
+					chooseLoader("Choose", func(selectedLoader string) {
+						loaders := []string{}
+						if selectedLoader != "" {
+							loaders = []string{selectedLoader}
+						}
+						showVersionPickerDialog(
+							"Select Mod Version",
+							r.Title,
+							r.ProjectID,
+							"",
+							loaders,
+							gameVersions,
+							"Install",
+							win,
+							func(selected *ModrinthVersion, _ *ModrinthVersion) {
+								setBusy(true)
+								go func() {
+									installed, err := InstallSpecificVersionWithDeps(selected, modsDir, loaders, gameVersions)
+									fyne.Do(func() {
+										if err != nil {
+											setBusy(false)
+											dialog.ShowError(fmt.Errorf("Failed to install %s: %w", r.Title, err), win)
+											return
+										}
+										refreshInstalledMap()
+										dialog.ShowInformation("Installed", fmt.Sprintf("Installed: %s", strings.Join(installed, ", ")), win)
+									})
+								}()
+							},
+						)
+					})
 				}
 			}
 
