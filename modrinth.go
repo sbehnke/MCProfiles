@@ -91,6 +91,7 @@ type ModrinthVersion struct {
 	ProjectID     string                `json:"project_id"`
 	Name          string                `json:"name"`
 	VersionNumber string                `json:"version_number"`
+	VersionType   string                `json:"version_type"`
 	GameVersions  []string              `json:"game_versions"`
 	Loaders       []string              `json:"loaders"`
 	Dependencies  []ModrinthDependency  `json:"dependencies"`
@@ -337,6 +338,13 @@ func versionSupportsGameVersion(v *ModrinthVersion, gameVersion string) bool {
 	return false
 }
 
+func versionIsStable(v *ModrinthVersion) bool {
+	if v == nil {
+		return false
+	}
+	return strings.EqualFold(v.VersionType, "") || strings.EqualFold(v.VersionType, "release")
+}
+
 func versionLabelMatchesGameVersion(v *ModrinthVersion, gameVersion string) bool {
 	if v == nil || gameVersion == "" {
 		return true
@@ -355,6 +363,9 @@ func versionLabelMatchesGameVersion(v *ModrinthVersion, gameVersion string) bool
 func pickBestVersion(versions []*ModrinthVersion, gameVersion string) *ModrinthVersion {
 	var fallback *ModrinthVersion
 	for _, v := range versions {
+		if !versionIsStable(v) {
+			continue
+		}
 		if !versionSupportsGameVersion(v, gameVersion) {
 			continue
 		}
@@ -978,6 +989,9 @@ func installVersionWithDeps(version *ModrinthVersion, modsDir string, loaders []
 		var depVersion *ModrinthVersion
 		if dep.VersionID != "" {
 			depVersion, err = GetVersion(dep.VersionID)
+			if err == nil && !versionIsStable(depVersion) {
+				depVersion = nil
+			}
 		} else {
 			var depVersions []*ModrinthVersion
 			depVersions, err = GetProjectVersions(dep.ProjectID, loaders, gameVersions)
