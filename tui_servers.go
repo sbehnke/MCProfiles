@@ -45,7 +45,8 @@ func newServersModel(cfg *ServersConfig, w, h int) serversModel {
 		items = append(items, serverItem{server: s})
 	}
 	delegate := list.NewDefaultDelegate()
-	l := list.New(items, delegate, w, h-4)
+	lw, lh := listDims(w, h)
+	l := list.New(items, delegate, lw, lh)
 	l.Title = "Servers"
 	l.SetStatusBarItemName("server", "servers")
 	l.Styles.Title = titleStyle
@@ -64,7 +65,23 @@ func serverListHelpKeys() []key.Binding {
 	}
 }
 
-func (s *serversModel) resize(w, h int) { s.list.SetSize(w, h-4) }
+func (s *serversModel) resize(w, h int) {
+	lw, lh := listDims(w, h)
+	s.list.SetSize(lw, lh)
+}
+
+// listDims returns safe (w, h) for a list.Model, accounting for the title/status
+// bar and flooring at sane minima so pre-WindowSizeMsg zero values don't panic.
+func listDims(w, h int) (int, int) {
+	if w < 20 {
+		w = 20
+	}
+	h -= 4
+	if h < 3 {
+		h = 3
+	}
+	return w, h
+}
 
 func (s *serversModel) refresh(cfg *ServersConfig) {
 	items := make([]list.Item, 0, len(cfg.Servers))
@@ -93,7 +110,8 @@ func updateServers(m rootModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.quitting = true
 				return m, tea.Quit
 			case "a":
-				m.editor = newEditorModel(Server{}, -1, m.width, m.height)
+				e := newEditorModel(Server{}, -1, m.width, m.height)
+				m.editor = &e
 				m.screen = screenEditor
 				m.lastMsg = ""
 				return m, m.editor.input[0].Focus()
@@ -102,7 +120,8 @@ func updateServers(m rootModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 				if !ok {
 					return m, nil
 				}
-				m.editor = newEditorModel(srv, idx, m.width, m.height)
+				e := newEditorModel(srv, idx, m.width, m.height)
+				m.editor = &e
 				m.screen = screenEditor
 				m.lastMsg = ""
 				return m, m.editor.input[0].Focus()
@@ -128,7 +147,8 @@ func updateServers(m rootModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.lastMsg = warnStyle.Render("this server has no mods_dir — edit it first")
 					return m, nil
 				}
-				m.mods = newModsModel(srv, m.width, m.height)
+				md := newModsModel(srv, m.width, m.height)
+				m.mods = &md
 				m.screen = screenMods
 				m.lastMsg = ""
 				return m, m.mods.startCheck()

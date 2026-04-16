@@ -23,9 +23,9 @@ type rootModel struct {
 	cfg      *ServersConfig
 	cfgErr   error
 	screen   screen
-	servers  serversModel
-	editor   editorModel
-	mods     modsModel
+	servers  *serversModel
+	editor   *editorModel
+	mods     *modsModel
 	width    int
 	height   int
 	lastMsg  string
@@ -52,14 +52,21 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.cfg == nil {
 			m.cfg = &ServersConfig{}
 		}
-		m.servers = newServersModel(m.cfg, m.width, m.height)
+		s := newServersModel(m.cfg, m.width, m.height)
+		m.servers = &s
 		return m, nil
 
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-		m.servers.resize(msg.Width, msg.Height)
-		m.editor.resize(msg.Width, msg.Height)
-		m.mods.resize(msg.Width, msg.Height)
+		if m.servers != nil {
+			m.servers.resize(msg.Width, msg.Height)
+		}
+		if m.editor != nil {
+			m.editor.resize(msg.Width, msg.Height)
+		}
+		if m.mods != nil {
+			m.mods.resize(msg.Width, msg.Height)
+		}
 		return m, nil
 
 	case tea.KeyMsg:
@@ -97,13 +104,17 @@ func (m rootModel) View() string {
 	var body string
 	switch m.screen {
 	case screenServers:
-		body = m.servers.view()
+		if m.servers != nil {
+			body = m.servers.view()
+		}
 	case screenEditor:
-		body = m.editor.view()
+		if m.editor != nil {
+			body = m.editor.view()
+		}
 	case screenMods:
-		body = m.mods.view()
-	default:
-		body = ""
+		if m.mods != nil {
+			body = m.mods.view()
+		}
 	}
 
 	status := m.lastMsg

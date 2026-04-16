@@ -80,7 +80,8 @@ type modsModel struct {
 
 func newModsModel(srv Server, w, h int) modsModel {
 	delegate := list.NewDefaultDelegate()
-	l := list.New(nil, delegate, w, h-4)
+	lw, lh := listDims(w, h)
+	l := list.New(nil, delegate, lw, lh)
 	l.Title = "Mods: " + srv.Name
 	l.Styles.Title = titleStyle
 	l.SetStatusBarItemName("mod", "mods")
@@ -111,7 +112,8 @@ func modListHelpKeys() []key.Binding {
 
 func (m *modsModel) resize(w, h int) {
 	m.width, m.height = w, h
-	m.list.SetSize(w, h-4)
+	lw, lh := listDims(w, h)
+	m.list.SetSize(lw, lh)
 }
 
 // --- messages ---------------------------------------------------------------
