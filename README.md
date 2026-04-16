@@ -1,8 +1,9 @@
 # MC Profile Editor
 
-A cross-platform GUI application for editing Minecraft's `launcher_profiles.json`.
+A cross-platform tool for managing Minecraft profiles and mods. Ships as:
 
-Built with [Go](https://go.dev) and [Fyne](https://fyne.io).
+- A **GUI** for the Minecraft launcher's `launcher_profiles.json` (Go + [Fyne](https://fyne.io)).
+- A **TUI** (`mcprofiles-tui`) for headless Linux servers that scans a mods folder and checks/updates mods on Modrinth (Go + [Bubble Tea](https://github.com/charmbracelet/bubbletea)).
 
 ![MC Profile Editor](resources/screenshot.png)
 
@@ -146,6 +147,45 @@ Produces 4 archives in `build/release/`:
 
 Requires Docker with buildx. On Apple Silicon, arm64 containers run natively and amd64 via Rosetta.
 
+### Linux server (TUI, headless)
+
+For headless Linux servers where the GUI can't run, `mcprofiles-tui` is a small
+static binary with no OpenGL or C dependencies. It manages a list of server
+mod folders and checks/updates them against Modrinth.
+
+```bash
+./build-linux-server.sh
+```
+
+Produces two static binaries under `build/mcprofiles-tui/`:
+
+| Artifact | Platform |
+|----------|----------|
+| `mcprofiles-tui-linux-amd64` | Linux x86_64 |
+| `mcprofiles-tui-linux-arm64` | Linux aarch64 |
+
+Or build on the server itself:
+
+```bash
+go build -tags headless -o mcprofiles-tui .
+./mcprofiles-tui
+```
+
+**Config file**: `~/.config/mcprofiles/servers.toml` (honors `$XDG_CONFIG_HOME`; override with `$MCPROFILES_CONFIG`).
+
+Each server entry holds:
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `name` | yes | Display name |
+| `mods_dir` | yes | Absolute path to the server's `mods/` folder |
+| `server_jar` | no | Path to the server jar; `ctrl+d` in the editor auto-detects `game_version` and `loader` from it |
+| `game_version` | no | e.g. `1.21.4` — needed for update checks |
+| `loader` | no | `fabric`, `forge`, `neoforge`, `quilt`, `paper`, or `vanilla` |
+| `java_path` | no | Reserved for future use |
+
+**Keys**: `a` add · `e` edit · `d` delete · `enter` open mods · `u` update selected · `U` update all · `r` refresh · `esc` back · `q` quit.
+
 ### GitHub Actions release build
 
 Linux x86_64 and Windows x86_64 release archives can be built in GitHub Actions by pushing a `v*` tag. The workflow uploads those artifacts to the matching GitHub release. macOS remains a local build because signing and notarization use local Apple credentials.
@@ -165,18 +205,30 @@ go build -o mcprofiles .
 
 ```
 MCProfiles/
-  main.go            Entry point, window layout, toolbar, state management
   profiles.go        JSON types, custom marshal/unmarshal, load/save, path detection
-  icons.go           Base64 icon decoding, placeholder generation
-  ui_list.go         Sidebar profile list with icons
-  ui_detail.go       Detail editing panel, icon picker, mods folder
+  modrinth.go        Modrinth API client, CheckMods, update/install helpers
+  jarparse.go        Mod jar metadata parser (fabric.mod.json, mods.toml)
+  shaders.go         Shader pack scanning + CheckShaders (pure logic)
+  servers.go         TUI config (servers.toml) load/save
+  serverdetect.go    Parse server.jar to detect game version + loader
+
+  main.go            GUI entry point (Fyne; build tag: !headless)
+  icons.go           Icon decoding + placeholder generation (Fyne)
+  ui_*.go            GUI screens (list, detail, mods, search, versions, shaders)
+
+  tui_main.go        TUI entry point (Bubble Tea; build tag: headless)
+  tui_servers.go     TUI server list + editor screens
+  tui_mods.go        TUI mod list screen (check + update)
+
   resources/
     AppIcon.icon/    macOS Icon Composer bundle (Tahoe-style layered icon)
-  build-macos.sh     macOS .app bundle with codesign & notarization
-  build-linux.sh     Linux build with .desktop integration
-  build-windows.sh   Windows build (native or cross-compile)
-  build-docker.sh    Docker multi-arch build (Linux + Windows, amd64 + arm64)
-  Dockerfile         Build container with Fyne deps + MinGW + llvm-mingw
+
+  build-macos.sh         macOS .app bundle with codesign & notarization
+  build-linux.sh         Linux GUI build with .desktop integration
+  build-linux-server.sh  Linux headless TUI build (static, no CGO)
+  build-windows.sh       Windows build (native or cross-compile)
+  build-docker.sh        Docker multi-arch build (Linux + Windows, amd64 + arm64)
+  Dockerfile             Build container with Fyne deps + MinGW + llvm-mingw
 ```
 
 ## License
