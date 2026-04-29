@@ -4,6 +4,7 @@ package main
 
 import (
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -141,6 +142,9 @@ func (m *modsModel) startCheck() tea.Cmd {
 				if info, err := DetectServerJar(m.server.ServerJar); err == nil {
 					gv = info.GameVersion
 				}
+			}
+			if gv == "" && m.server.ModsDir != "" {
+				gv = DetectGameVersionFromDataDir(filepath.Dir(m.server.ModsDir))
 			}
 			mods, err := CheckMods(m.server.ModsDir, gv)
 			return modsLoadedMsg{mods: mods, err: err, gameVersion: gv}

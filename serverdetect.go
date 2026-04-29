@@ -5,10 +5,13 @@ import (
 	"bufio"
 	"encoding/json"
 	"io"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 )
+
+var paperMCVersionPattern = regexp.MustCompile(`MC:\s*(\d+\.\d+(?:\.\d+)?)`)
 
 // ServerJarInfo is what we can learn from inspecting a server jar.
 type ServerJarInfo struct {
@@ -92,6 +95,59 @@ func DetectServerJar(path string) (ServerJarInfo, error) {
 	}
 
 	return info, nil
+}
+
+// DetectGameVersionFromDataDir scans a server's data directory (the parent of
+// mods/) for the Minecraft version. Useful when the server jar isn't a
+// configured path — e.g. itzg/minecraft-server downloads the jar at runtime
+// into the mounted data volume.
+func DetectGameVersionFromDataDir(dataDir string) string {
+	if dataDir == "" {
+		return ""
+	}
+
+	if v := readPaperVersionHistory(filepath.Join(dataDir, "version_history.json")); v != "" {
+		return v
+	}
+
+	entries, err := os.ReadDir(dataDir)
+	if err != nil {
+		return ""
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(strings.ToLower(e.Name()), ".jar") {
+			continue
+		}
+		info, err := DetectServerJar(filepath.Join(dataDir, e.Name()))
+		if err == nil && info.GameVersion != "" {
+			return info.GameVersion
+		}
+	}
+	return ""
+}
+
+// readPaperVersionHistory parses Paper/Purpur/Folia's version_history.json.
+// Format: {"currentVersion":"git-Paper-196 (MC: 1.20.1)"}.
+func readPaperVersionHistory(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	var v struct {
+		CurrentVersion string `json:"currentVersion"`
+		OldVersion     string `json:"oldVersion"`
+	}
+	if json.Unmarshal(data, &v) != nil {
+		return ""
+	}
+	s := v.CurrentVersion
+	if s == "" {
+		s = v.OldVersion
+	}
+	if m := paperMCVersionPattern.FindStringSubmatch(s); len(m) == 2 {
+		return m[1]
+	}
+	return ""
 }
 
 // readZipProps parses a Java .properties file from inside a zip entry.
