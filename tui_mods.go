@@ -119,8 +119,9 @@ func (m *modsModel) resize(w, h int) {
 // --- messages ---------------------------------------------------------------
 
 type modsLoadedMsg struct {
-	mods []ModInfo
-	err  error
+	mods        []ModInfo
+	err         error
+	gameVersion string
 }
 
 type modUpdatedMsg struct {
@@ -135,8 +136,14 @@ func (m *modsModel) startCheck() tea.Cmd {
 	return tea.Batch(
 		m.spinner.Tick,
 		func() tea.Msg {
-			mods, err := CheckMods(m.server.ModsDir, m.server.GameVersion)
-			return modsLoadedMsg{mods: mods, err: err}
+			gv := m.server.GameVersion
+			if gv == "" && m.server.ServerJar != "" {
+				if info, err := DetectServerJar(m.server.ServerJar); err == nil {
+					gv = info.GameVersion
+				}
+			}
+			mods, err := CheckMods(m.server.ModsDir, gv)
+			return modsLoadedMsg{mods: mods, err: err, gameVersion: gv}
 		},
 	)
 }
@@ -272,7 +279,14 @@ func updateMods(m rootModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		sorted := sortMods(msg.mods)
 		m.mods.list.SetItems(buildModItems(sorted))
-		m.mods.summary = modSummary(sorted)
+		summary := modSummary(sorted)
+		switch {
+		case msg.gameVersion == "":
+			summary += "  ·  " + warnStyle.Render("no game_version set — update detection skipped")
+		case m.mods.server.GameVersion == "":
+			summary += "  ·  " + mutedStyle.Render("game_version "+msg.gameVersion+" (auto-detected)")
+		}
+		m.mods.summary = summary
 		return m, nil
 
 	case modUpdatedMsg:
